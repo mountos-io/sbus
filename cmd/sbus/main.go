@@ -1,5 +1,5 @@
-// Command csbus is the CLI for the session bus: a store-and-forward router
-// over a Unix domain socket that lets Claude Code sessions on the same
+// Command sbus is the CLI for the session bus: a store-and-forward router
+// over a Unix domain socket that lets AI agent sessions on the same
 // machine trade named messages, even when the recipient isn't up yet.
 package main
 
@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mountos-io/mountos-tools/csbus/internal/bus"
-	"github.com/mountos-io/mountos-tools/csbus/internal/hub"
-	"github.com/mountos-io/mountos-tools/csbus/internal/proto"
+	"github.com/mountos-io/sbus/internal/bus"
+	"github.com/mountos-io/sbus/internal/hub"
+	"github.com/mountos-io/sbus/internal/proto"
 )
 
 func main() {
@@ -39,7 +39,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: csbus <command> [flags]
+	fmt.Fprintln(os.Stderr, `usage: sbus <command> [flags]
 
   send   --as NAME --to NAME[,NAME...] [--ttl DURATION] [--ack] BODY
          --to accepts a broadcast pattern: "*" (everyone) or "prefix:*"
@@ -54,7 +54,7 @@ func usage() {
 
 func must(err error) {
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "csbus:", err)
+		fmt.Fprintln(os.Stderr, "sbus:", err)
 		os.Exit(1)
 	}
 }

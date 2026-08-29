@@ -1,4 +1,4 @@
-// Package bus is the client-side half of csbus: where the hub's socket
+// Package bus is the client-side half of sbus: where the hub's socket
 // lives, and how to reach it, spawning a detached hub on first use if none
 // is listening yet.
 package bus
@@ -14,21 +14,21 @@ import (
 )
 
 const (
-	sockEnvVar = "CSBUS_SOCK"
+	sockEnvVar = "SBUS_SOCK"
 	spawnWait  = 2 * time.Second
 	spawnRetry = 50 * time.Millisecond
 )
 
-// DefaultSockPath returns $CSBUS_SOCK if set, else ~/.claude/csbus.sock.
+// DefaultSockPath returns $SBUS_SOCK if set, else ~/.claude/sbus.sock.
 func DefaultSockPath() string {
 	if v := os.Getenv(sockEnvVar); v != "" {
 		return v
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(os.TempDir(), "csbus.sock")
+		return filepath.Join(os.TempDir(), "sbus.sock")
 	}
-	return filepath.Join(home, ".claude", "csbus.sock")
+	return filepath.Join(home, ".claude", "sbus.sock")
 }
 
 // Dial connects to the hub at sockPath, spawning a detached one if nothing
@@ -54,7 +54,7 @@ func Dial(sockPath string) (net.Conn, error) {
 	return nil, fmt.Errorf("hub did not come up at %s: %w", sockPath, lastErr)
 }
 
-// spawn starts this same binary as "csbus serve --sock <sockPath>",
+// spawn starts this same binary as "sbus serve --sock <sockPath>",
 // detached from the current process group so it outlives it.
 func spawn(sockPath string) error {
 	self, err := os.Executable()

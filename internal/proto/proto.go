@@ -1,4 +1,4 @@
-// Package proto is the newline-delimited JSON wire protocol between csbus
+// Package proto is the newline-delimited JSON wire protocol between sbus
 // clients and the hub, spoken over a Unix domain socket. Every connection
 // starts with a client "register", then exchanges any number of envelopes
 // until it closes.

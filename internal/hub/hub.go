@@ -1,4 +1,4 @@
-// Package hub implements the csbus server: an in-memory, per-name mailbox
+// Package hub implements the sbus server: an in-memory, per-name mailbox
 // keyed store-and-forward router reachable over a Unix domain socket.
 //
 // A message is delivered immediately if the target is currently listening,
@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mountos-io/mountos-tools/csbus/internal/proto"
+	"github.com/mountos-io/sbus/internal/proto"
 )
 
 const (
