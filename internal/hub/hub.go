@@ -52,17 +52,30 @@ type liveConn struct {
 type mailbox struct {
 	mu    sync.Mutex
 	queue []*queuedMsg
-	live  *liveConn
+	live  []*liveConn // any number of connections may be live at once; none evicts another
+}
+
+// pushToLive writes env to every current live connection, dropping any that
+// error (the write failed, e.g. the peer went away). Reports whether at
+// least one connection got it.
+func (b *mailbox) pushToLive(env *proto.Envelope) bool {
+	delivered := false
+	alive := b.live[:0]
+	for _, lc := range b.live {
+		if err := lc.w.Write(env); err == nil {
+			alive = append(alive, lc)
+			delivered = true
+		}
+	}
+	b.live = alive
+	return delivered
 }
 
 func (b *mailbox) push(m *queuedMsg, cap int) deliverStatus {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.live != nil {
-		if err := b.live.w.Write(m.env); err == nil {
-			return deliveredLive
-		}
-		b.live = nil
+	if len(b.live) > 0 && b.pushToLive(m.env) {
+		return deliveredLive
 	}
 	if len(b.queue) >= cap {
 		return full
@@ -71,35 +84,27 @@ func (b *mailbox) push(m *queuedMsg, cap int) deliverStatus {
 	return queued
 }
 
-// pushLiveOnly writes env directly to the current listener, if any, without
+// pushLiveOnly writes env to every current live listener, if any, without
 // ever touching the queue. Used for broadcast, which has no single owner to
 // hold a backlog for.
 func (b *mailbox) pushLiveOnly(env *proto.Envelope) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.live == nil {
+	if len(b.live) == 0 {
 		return false
 	}
-	if err := b.live.w.Write(env); err != nil {
-		b.live = nil
-		return false
-	}
-	return true
+	return b.pushToLive(env)
 }
 
-// attach makes (w, conn) this mailbox's live listener and returns its
-// current backlog (expired entries dropped), clearing the queue. A name
-// has only one live listener at a time: if another connection already
-// holds it, attach evicts it — tells it why, then closes its connection —
-// rather than leaving it silently orphaned.
+// attach adds (w, conn) to this mailbox's live listeners and returns its
+// current backlog (expired entries dropped), clearing the queue. Any number
+// of connections can be live under the same name at once: attach never
+// evicts an existing listener, and a message reaching this mailbox is
+// delivered to all of them.
 func (b *mailbox) attach(w *proto.Writer, conn net.Conn) []*queuedMsg {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.live != nil {
-		b.live.w.Write(&proto.Envelope{Op: proto.OpError, Reason: "evicted: another connection registered under this name"})
-		b.live.conn.Close()
-	}
-	b.live = &liveConn{w: w, conn: conn}
+	b.live = append(b.live, &liveConn{w: w, conn: conn})
 	return b.drainLocked()
 }
 
@@ -126,9 +131,7 @@ func (b *mailbox) drainLocked() []*queuedMsg {
 func (b *mailbox) detach(w *proto.Writer) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.live != nil && b.live.w == w {
-		b.live = nil
-	}
+	b.live = slices.DeleteFunc(b.live, func(lc *liveConn) bool { return lc.w == w })
 }
 
 type pendingAck struct {
@@ -304,7 +307,7 @@ func (h *Hub) sweepOnce() {
 	for name, b := range h.mailboxes {
 		b.mu.Lock()
 		b.queue = slices.DeleteFunc(b.queue, func(m *queuedMsg) bool { return now.After(m.expires) })
-		empty := len(b.queue) == 0 && b.live == nil
+		empty := len(b.queue) == 0 && len(b.live) == 0
 		b.mu.Unlock()
 		if empty {
 			delete(h.mailboxes, name)

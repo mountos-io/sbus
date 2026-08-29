@@ -65,7 +65,11 @@ hub on first use if it isn't already running.
 
 - `sbus send --as <my-name> --to <name>[,<name>...] [--ack] "text"`
 - `sbus recv --as <my-name> [--wait 10s]`
-- `sbus listen --as <my-name>` (run in background to watch for messages)
+- `sbus listen --as <my-name>` never exits on its own — run it with
+  whatever your harness gives you for a background task that reports
+  output as it streams, not one that only reports back at process exit.
+  An exit-only background runner will never notify you: `listen` has no
+  exit to wait for.
 - `--to "*"` broadcasts to every currently-listening session; `--to
   "prefix:*"` scopes it to listening names starting with `prefix:`.
 - Pick `<my-name>` to be identifiable (project + role), e.g.
@@ -86,15 +90,17 @@ finds nobody listening on the socket spawns `sbus serve` detached and
 retries. There is no install step, service file, or manual start/stop.
 Logs from an auto-spawned hub land at `~/.claude/sbus.sock.log`.
 
-## A name has one live listener at a time
+## A name can have multiple live listeners
 
-If a second `listen` registers under a name that's already listening, the
-hub evicts the first one: it gets an `error` envelope explaining why, then
-its connection is closed. Its own `sbus listen`/`recv --wait` process exits
-on its own once that happens — no manual cleanup needed. This makes
-restarting a session's listener under the same name safe, but means a name
-is not a fan-out group: at most one connection under a given name ever
-receives a given message.
+Any number of connections can register `listen`/`recv --wait` under the
+same name at once — registering never evicts an existing listener. A
+message reaching that name (a plain `send`, a receipt, or a matching
+broadcast) is delivered to every one of its currently-live listeners, not
+just one. This makes a standing `listen` and a one-off `recv --wait` under
+the same name safe to run at the same time — the one-off doesn't disturb
+the standing listener — and it makes restarting a session's listener under
+the same name safe too: the old connection just keeps running alongside
+the new one until it's stopped or its process ends on its own.
 
 ## Commands
 
@@ -117,9 +123,16 @@ sbus ack    --as NAME --id ID
   see.
 - `recv` drains whatever's queued right now. Add `--wait 30s` to block up to
   that long for something new instead of returning empty-handed.
-- `listen` is `recv` with no time limit — run it with `run_in_background` in
-  a session that wants to be notified as messages arrive, rather than
-  polling.
+- `listen` is `recv` with no time limit — it blocks and streams messages
+  forever, so it never exits on its own. That makes a plain "run this in
+  the background" primitive the wrong tool if that primitive only reports
+  back when the process exits (a common default): it will sit there
+  silently and never notify you, since `listen` gives it no exit to catch.
+  Use whatever your harness offers for a background task whose output
+  streams back live, line by line, while it's still running. Relaunching
+  `recv --wait N` in a loop is not a fix for this either — `recv --wait`
+  keeps streaming until N elapses, same as `listen`, so it has the same
+  exit-only-notification problem, just bounded to N.
 - `--ack` on `send` asks for receipts in your own mailbox: a `delivered`
   receipt the moment the message leaves the queue (read via `recv`/`listen`,
   automatic), and an `acked` receipt if the recipient later runs
@@ -139,8 +152,10 @@ sbus ack    --as NAME --id ID
 ## Example
 
 ```
-# session B, in the background, gets notified live:
-sbus listen --as sess-B &
+# session B: run under a streaming-aware background watcher (not a plain
+# fire-and-forget background shell — that only reports at exit, and
+# listen never exits):
+sbus listen --as sess-B
 
 # session A, from anywhere on the machine:
 sbus send --as sess-A --to sess-B --ack "restarting the blockserv pair, hold off on writes"

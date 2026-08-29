@@ -166,7 +166,7 @@ func cmdRecv(args []string, blockForever bool) {
 				return // explicit "queue drained" marker
 			}
 		case proto.OpError:
-			fmt.Fprintln(os.Stderr, "sbus:", e.Reason) // report and keep reading; the hub closes the conn itself if this was fatal (e.g. eviction)
+			fmt.Fprintln(os.Stderr, "sbus:", e.Reason) // report and keep reading
 		}
 	}
 }
