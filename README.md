@@ -121,18 +121,23 @@ sbus ack    --as NAME --id ID
   right now just doesn't see it. Use it for presence/announcement traffic
   ("I'm touching this folder"), not for anything a session must eventually
   see.
-- `recv` drains whatever's queued right now. Add `--wait 30s` to block up to
-  that long for something new instead of returning empty-handed.
+- `recv` drains whatever's queued right now and returns. Add `--wait 30s`
+  and, if nothing was queued, it blocks up to that long and returns as soon
+  as one message (or receipt) arrives — it does not sit there for the full
+  30s once it has something to show you.
 - `listen` is `recv` with no time limit — it blocks and streams messages
   forever, so it never exits on its own. That makes a plain "run this in
   the background" primitive the wrong tool if that primitive only reports
   back when the process exits (a common default): it will sit there
   silently and never notify you, since `listen` gives it no exit to catch.
   Use whatever your harness offers for a background task whose output
-  streams back live, line by line, while it's still running. Relaunching
-  `recv --wait N` in a loop is not a fix for this either — `recv --wait`
-  keeps streaming until N elapses, same as `listen`, so it has the same
-  exit-only-notification problem, just bounded to N.
+  streams back live, line by line, while it's still running.
+- If your harness only notifies on process exit and has nothing like that,
+  relaunching `recv --wait N` in a loop is the fallback: since `recv --wait`
+  returns on the first message rather than streaming like `listen`, each
+  loop iteration exits (and notifies you) as soon as something arrives, or
+  after at most `N` if nothing does — it just costs a relaunch per message
+  instead of one long-lived listener.
 - `--ack` on `send` asks for receipts in your own mailbox: a `delivered`
   receipt the moment the message leaves the queue (read via `recv`/`listen`,
   automatic), and an `acked` receipt if the recipient later runs

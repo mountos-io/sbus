@@ -142,9 +142,18 @@ func cmdRecv(args []string, blockForever bool) {
 		op = proto.OpListen
 	}
 	must(w.Write(&proto.Envelope{Op: op}))
-	if !blockForever && *wait > 0 {
+	// bounded is a recv --wait call, not plain listen: once the backlog is
+	// confirmed flushed, it returns on the next message instead of
+	// streaming until the deadline like listen does.
+	bounded := op == proto.OpListen && !blockForever
+	if bounded {
 		conn.SetReadDeadline(time.Now().Add(*wait))
 	}
+	// backlogDone: the "queue flushed, now live" marker has been seen.
+	// gotAny: at least one message has been printed (backlog or live).
+	// Once both are true, a bounded wait has what it came for and returns
+	// instead of streaming further like listen does.
+	backlogDone, gotAny := false, false
 
 	for {
 		e, err := r.Read()
@@ -159,11 +168,25 @@ func cmdRecv(args []string, blockForever bool) {
 				from = fmt.Sprintf("%s (re: %s)", e.From, e.ReplyTo)
 			}
 			fmt.Printf("[%s +%s] id=%s %s: %s\n", ts.Format(time.RFC3339), time.Since(ts).Round(time.Second), e.ID, from, e.Body)
+			gotAny = true
+			if bounded && backlogDone {
+				return // a live message, and the backlog's already accounted for: done
+			}
 		case proto.OpReceipt:
 			fmt.Printf("[receipt] id=%s from=%s status=%s\n", e.ID, e.From, e.Status)
+			gotAny = true
+			if bounded && backlogDone {
+				return // a live receipt, and the backlog's already accounted for: done
+			}
 		case proto.OpOK:
-			if op == proto.OpPoll {
+			switch {
+			case op == proto.OpPoll:
 				return // explicit "queue drained" marker
+			case bounded:
+				backlogDone = true
+				if gotAny {
+					return // backlog had something: no need to wait for more
+				}
 			}
 		case proto.OpError:
 			fmt.Fprintln(os.Stderr, "sbus:", e.Reason) // report and keep reading

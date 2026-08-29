@@ -379,6 +379,13 @@ func (h *Hub) handleConn(c net.Conn) {
 					return
 				}
 			}
+			// Marks "backlog fully flushed, now live" so a bounded recv --wait
+			// can tell it's seen everything queued and it's safe to return on
+			// the next message instead of streaming until its deadline.
+			if w.Write(&proto.Envelope{Op: proto.OpOK}) != nil {
+				h.box(name).detach(w)
+				return
+			}
 		case proto.OpAck:
 			if w.Write(h.handleAck(name, e)) != nil {
 				return
