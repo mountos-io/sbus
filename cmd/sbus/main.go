@@ -41,7 +41,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage: sbus <command> [flags]
 
-  send   --as NAME --to NAME[,NAME...] [--ttl DURATION] [--ack] BODY
+  send   --as NAME --to NAME[,NAME...] [--ttl DURATION] [--ack] [--reply-to ID] BODY
          --to accepts a broadcast pattern: "*" (everyone) or "prefix:*"
          (every listening name starting with "prefix:").
   recv   --as NAME [--wait DURATION]     drain queued messages, optionally
@@ -86,6 +86,7 @@ func cmdSend(args []string) {
 	to := fs.String("to", "", "comma-separated recipient names or broadcast pattern")
 	ttl := fs.Duration("ttl", 0, "override the default queue TTL for this message")
 	ack := fs.Bool("ack", false, "request a delivery/ack receipt back in my own mailbox")
+	replyTo := fs.String("reply-to", "", "id of the message this one replies to")
 	sock := fs.String("sock", bus.DefaultSockPath(), "hub socket path")
 	must(fs.Parse(args))
 	if *as == "" || *to == "" || fs.NArg() == 0 {
@@ -97,7 +98,7 @@ func cmdSend(args []string) {
 
 	r, w, conn := register(*sock, *as)
 	defer conn.Close()
-	must(w.Write(&proto.Envelope{Op: proto.OpSend, To: targets, Body: body, TTL: int64((*ttl).Seconds()), Ack: *ack}))
+	must(w.Write(&proto.Envelope{Op: proto.OpSend, To: targets, Body: body, TTL: int64((*ttl).Seconds()), Ack: *ack, ReplyTo: *replyTo}))
 
 	exitCode := 0
 	for range targets {
@@ -153,13 +154,19 @@ func cmdRecv(args []string, blockForever bool) {
 		switch e.Op {
 		case proto.OpMsg:
 			ts := time.Unix(e.TS, 0)
-			fmt.Printf("[%s +%s] %s: %s\n", ts.Format(time.RFC3339), time.Since(ts).Round(time.Second), e.From, e.Body)
+			from := e.From
+			if e.ReplyTo != "" {
+				from = fmt.Sprintf("%s (re: %s)", e.From, e.ReplyTo)
+			}
+			fmt.Printf("[%s +%s] id=%s %s: %s\n", ts.Format(time.RFC3339), time.Since(ts).Round(time.Second), e.ID, from, e.Body)
 		case proto.OpReceipt:
 			fmt.Printf("[receipt] id=%s from=%s status=%s\n", e.ID, e.From, e.Status)
 		case proto.OpOK:
 			if op == proto.OpPoll {
 				return // explicit "queue drained" marker
 			}
+		case proto.OpError:
+			fmt.Fprintln(os.Stderr, "sbus:", e.Reason) // report and keep reading; the hub closes the conn itself if this was fatal (e.g. eviction)
 		}
 	}
 }

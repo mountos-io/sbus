@@ -7,6 +7,7 @@
 //
 //	{"op":"register","name":"sess-A"}
 //	{"op":"send","to":["sess-B"],"body":"...","ttl":300,"ack":true}
+//	{"op":"send","to":["sess-A"],"body":"...","reply_to":"m1"} // threaded reply to message m1
 //	{"op":"send","to":["*"],"body":"..."}         // broadcast: every live listener
 //	{"op":"send","to":["mountos:*"],"body":"..."} // broadcast: live listeners named "mountos:..."
 //	{"op":"poll"}                                // drain my queue now, don't block
@@ -18,7 +19,7 @@
 //	{"op":"ok"}                                   // register accepted, or poll drained
 //	{"op":"sent","id":"m1","target":"sess-B"}      // send accepted for one target
 //	{"op":"error","target":"sess-B","reason":"..."}// send rejected for one target
-//	{"op":"msg","id":"m1","from":"sess-A","body":"...","ts":..,"exp":..}
+//	{"op":"msg","id":"m2","from":"sess-B","body":"...","ts":..,"exp":..,"reply_to":"m1"}
 //	{"op":"receipt","id":"m1","from":"sess-B","status":"delivered","ts":..}
 package proto
 
@@ -61,11 +62,12 @@ func BroadcastPrefix(target string) string { return strings.TrimSuffix(target, "
 type Envelope struct {
 	Op Op `json:"op"`
 
-	Name string   `json:"name,omitempty"` // register
-	To   []string `json:"to,omitempty"`   // send
-	Body string   `json:"body,omitempty"` // send, msg
-	TTL  int64    `json:"ttl,omitzero"`   // send: seconds, overrides the hub default (capped)
-	Ack  bool     `json:"ack,omitzero"`   // send: request a delivery/ack receipt
+	Name    string   `json:"name,omitempty"`     // register
+	To      []string `json:"to,omitempty"`       // send
+	Body    string   `json:"body,omitempty"`     // send, msg
+	TTL     int64    `json:"ttl,omitzero"`       // send: seconds, overrides the hub default (capped)
+	Ack     bool     `json:"ack,omitzero"`       // send: request a delivery/ack receipt
+	ReplyTo string   `json:"reply_to,omitempty"` // send, msg: id of the message this one replies to
 
 	ID     string `json:"id,omitempty"`     // sent, error, msg, ack, receipt
 	From   string `json:"from,omitempty"`   // msg, receipt: original sender / acker name

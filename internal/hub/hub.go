@@ -44,7 +44,10 @@ type queuedMsg struct {
 	env     *proto.Envelope
 }
 
-type liveConn struct{ w *proto.Writer }
+type liveConn struct {
+	w    *proto.Writer
+	conn net.Conn
+}
 
 type mailbox struct {
 	mu    sync.Mutex
@@ -84,12 +87,19 @@ func (b *mailbox) pushLiveOnly(env *proto.Envelope) bool {
 	return true
 }
 
-// attach makes w this mailbox's live listener and returns its current
-// backlog (expired entries dropped), clearing the queue.
-func (b *mailbox) attach(w *proto.Writer) []*queuedMsg {
+// attach makes (w, conn) this mailbox's live listener and returns its
+// current backlog (expired entries dropped), clearing the queue. A name
+// has only one live listener at a time: if another connection already
+// holds it, attach evicts it — tells it why, then closes its connection —
+// rather than leaving it silently orphaned.
+func (b *mailbox) attach(w *proto.Writer, conn net.Conn) []*queuedMsg {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.live = &liveConn{w: w}
+	if b.live != nil {
+		b.live.w.Write(&proto.Envelope{Op: proto.OpError, Reason: "evicted: another connection registered under this name"})
+		b.live.conn.Close()
+	}
+	b.live = &liveConn{w: w, conn: conn}
 	return b.drainLocked()
 }
 
@@ -204,8 +214,8 @@ func (h *Hub) emitReceipt(to, id, target, status string) {
 // broadcastLive fans body out live-only to every listening mailbox whose
 // name has prefix as a prefix (except from itself), and reports how many
 // were actually reached.
-func (h *Hub) broadcastLive(from, id string, ts, expires time.Time, body, prefix string) int {
-	env := &proto.Envelope{Op: proto.OpMsg, ID: id, From: from, Body: body, TS: ts.Unix(), Exp: expires.Unix()}
+func (h *Hub) broadcastLive(from, id string, ts, expires time.Time, body, prefix, replyTo string) int {
+	env := &proto.Envelope{Op: proto.OpMsg, ID: id, From: from, Body: body, TS: ts.Unix(), Exp: expires.Unix(), ReplyTo: replyTo}
 
 	h.mu.Lock()
 	targets := make([]*mailbox, 0, len(h.mailboxes))
@@ -242,13 +252,13 @@ func (h *Hub) handleSend(from string, e *proto.Envelope) []*proto.Envelope {
 	for _, target := range e.To {
 		if proto.IsBroadcast(target) {
 			id := h.nextID()
-			n := h.broadcastLive(from, id, now, expires, e.Body, proto.BroadcastPrefix(target))
+			n := h.broadcastLive(from, id, now, expires, e.Body, proto.BroadcastPrefix(target), e.ReplyTo)
 			replies = append(replies, &proto.Envelope{Op: proto.OpSent, ID: id, Target: target, N: n})
 			continue
 		}
 
 		id := h.nextID()
-		msg := &proto.Envelope{Op: proto.OpMsg, ID: id, From: from, Body: e.Body, TS: now.Unix(), Exp: expires.Unix()}
+		msg := &proto.Envelope{Op: proto.OpMsg, ID: id, From: from, Body: e.Body, TS: now.Unix(), Exp: expires.Unix(), ReplyTo: e.ReplyTo}
 		status := h.enqueue(target, id, expires, msg)
 		if status == full {
 			replies = append(replies, &proto.Envelope{Op: proto.OpError, ID: id, Target: target, Reason: "queue full"})
@@ -358,7 +368,7 @@ func (h *Hub) handleConn(c net.Conn) {
 				return
 			}
 		case proto.OpListen:
-			msgs := h.box(name).attach(w)
+			msgs := h.box(name).attach(w, c)
 			h.deliveredReceipts(name, msgs)
 			for _, m := range msgs {
 				if w.Write(m.env) != nil {

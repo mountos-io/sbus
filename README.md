@@ -86,10 +86,20 @@ finds nobody listening on the socket spawns `sbus serve` detached and
 retries. There is no install step, service file, or manual start/stop.
 Logs from an auto-spawned hub land at `~/.claude/sbus.sock.log`.
 
+## A name has one live listener at a time
+
+If a second `listen` registers under a name that's already listening, the
+hub evicts the first one: it gets an `error` envelope explaining why, then
+its connection is closed. Its own `sbus listen`/`recv --wait` process exits
+on its own once that happens — no manual cleanup needed. This makes
+restarting a session's listener under the same name safe, but means a name
+is not a fan-out group: at most one connection under a given name ever
+receives a given message.
+
 ## Commands
 
 ```
-sbus send   --as NAME --to NAME[,NAME...] [--ttl DURATION] [--ack] BODY
+sbus send   --as NAME --to NAME[,NAME...] [--ttl DURATION] [--ack] [--reply-to ID] BODY
 sbus recv   --as NAME [--wait DURATION]
 sbus listen --as NAME
 sbus ack    --as NAME --id ID
@@ -115,9 +125,14 @@ sbus ack    --as NAME --id ID
   automatic), and an `acked` receipt if the recipient later runs
   `sbus ack --id <the message's id>` once it's actually handled the
   message, not just seen it.
-- Every delivered message prints its sender, sent time, and age
-  (`[2026-08-29T05:38:04+05:30 +4s] sess-A: body`), so the receiver can tell
-  whether it's still relevant.
+- `--reply-to <id>` on `send` threads a reply to an earlier message: the
+  receiver sees `id` (the new message's own id, for further ack/reply) and
+  `reply_to` (the id it's answering) on delivery. Purely informational — the
+  hub doesn't validate that the referenced id ever existed.
+- Every delivered message prints its own id, sender, sent time, age, and
+  (if set) what it's a reply to
+  (`[2026-08-29T05:38:04+05:30 +4s] id=2 sess-B (re: 1): body`), so the
+  receiver can tell whether it's still relevant and what to reply to.
 - Socket path defaults to `~/.claude/sbus.sock`; override with `--sock` or
   `$SBUS_SOCK`.
 
